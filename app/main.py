@@ -53,6 +53,11 @@ def localizar_produto(produto_id: int):
             return p
     raise HTTPException(status_code=404, detail="Produto não encontrado.")
 
+# Novo endpoint para listar todos os produtos  
+@app.get("/produtos/", response_model=List[Produto])  
+def listar_produtos():  
+    return produtos  # Retorna a lista de produtos cadastrados
+
 @app.get("/relatorios/", response_model=List[Relatorio])
 def gerar_relatorios():
     # Gerar relatórios sobre o estoque (simulação)
@@ -60,6 +65,8 @@ def gerar_relatorios():
         {"id": 1, "descricao": "Relatório de produtos com baixo estoque", "data": "2024-11-04"},
         {"id": 2, "descricao": "Movimentação de produtos", "data": "2024-11-04"}
     ]
+
+
 
 # Rotas para gerenciamento de usuários
 @app.post("/usuarios/", response_model=Usuario)

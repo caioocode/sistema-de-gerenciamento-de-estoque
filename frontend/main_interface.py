@@ -78,7 +78,7 @@ tk.Label(app, text="Prateleira").grid(row=6, column=0)
 entry_prateleira = tk.Entry(app)
 entry_prateleira.grid(row=6, column=1)
 
-# Botões
+# Botões - falta adicionar: atualizar, remover, relatório
 btn_cadastrar = tk.Button(app, text="Cadastrar Produto", command=cadastrar_produto)
 btn_cadastrar.grid(row=7, column=0, columnspan=2)
 
