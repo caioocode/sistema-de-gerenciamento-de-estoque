@@ -74,5 +74,10 @@ def localizar_produto(produto_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
     return db_produto
 
+@app.get("/produtos/", response_model=List[Produto])  
+def listar_produtos(db: Session = Depends(get_db)):  
+    produtos = db.query(ProdutoDB).all()  # Obtém todos os produtos do banco de dados  
+    return produtos  
+
 # Iniciar o servidor
 # uvicorn nome_do_arquivo:app --reload
