@@ -1,14 +1,46 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy import Column, Integer, String, Float, create_engine
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+import logging
+
+# Configuração do logger
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
-# Base de dados simulada
-produtos = []
-usuarios = []
+# Configuração do banco de dados
+DATABASE_URL = "sqlite:///./estoque.db"
 
-# Modelos Pydantic para validação dos dados
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Definir modelos SQLAlchemy
+class ProdutoDB(Base):
+    __tablename__ = "produtos"
+    id = Column(Integer, primary_key=True, index=True)
+    nome = Column(String, index=True)
+    categoria = Column(String)
+    quantidade = Column(Integer)
+    preco = Column(Float)
+    corredor = Column(String)
+    prateleira = Column(String)
+
+# Criar as tabelas
+Base.metadata.create_all(bind=engine)
+
+# Dependência para obter a sessão do banco de dados
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Modelos Pydantic para validação de dados de entrada/saída
 class Produto(BaseModel):
     id: int
     nome: str
@@ -17,6 +49,9 @@ class Produto(BaseModel):
     preco: float
     corredor: str
     prateleira: str
+
+    class Config:
+        from_attributes = True
 
 class Relatorio(BaseModel):
     id: int
@@ -28,62 +63,79 @@ class Usuario(BaseModel):
     senha: str
     tipo: str  # "UsuarioComum", "Estoquista", ou "Gerente"
 
-# Rotas para gerenciamento de produtos
+# Rotas de gerenciamento de produtos
 @app.post("/produtos/", response_model=Produto)
-def cadastrar_produto(produto: Produto):
-    # Verifica se o produto já existe
-    for p in produtos:
-        if p.id == produto.id:
+def cadastrar_produto(produto: Produto, db: Session = Depends(get_db)):
+    try:        
+        # Verifica se o produto já existe no banco
+        produto_existente = db.query(ProdutoDB).filter(ProdutoDB.id == produto.id).first()
+        if produto_existente:
             raise HTTPException(status_code=400, detail="Produto já cadastrado.")
-    produtos.append(produto)
-    return produto
+        
+        # Criação do novo produto
+        db_produto = ProdutoDB(**produto.dict())  # Cria o objeto ProdutoDB com os dados do Produto Pydantic
+        
+        db.add(db_produto)  # Adiciona o produto à sessão
+        db.commit()  # Confirma a adição no banco
+        db.refresh(db_produto)  # Atualiza o objeto para obter o ID gerado e outras informações
 
+        return db_produto  # Retorna o produto cadastrado
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Erro ao cadastrar o produto.")
+    
 @app.put("/produtos/{produto_id}", response_model=Produto)
-def atualizar_estoque(produto_id: int, quantidade: int):
-    for p in produtos:
-        if p.id == produto_id:
-            p.quantidade += quantidade
-            return p
-    raise HTTPException(status_code=404, detail="Produto não encontrado.")
+def atualizar_estoque(produto_id: int, produto: Produto, db: Session = Depends(get_db)):
+    db_produto = db.query(ProdutoDB).filter(ProdutoDB.id == produto_id).first()
+    if db_produto is None:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    
+    # Atualiza as informações do produto
+    db_produto.nome = produto.nome
+    db_produto.categoria = produto.categoria
+    db_produto.quantidade = produto.quantidade
+    db_produto.preco = produto.preco
+    db_produto.corredor = produto.corredor
+    db_produto.prateleira = produto.prateleira
+
+    db.commit()
+    db.refresh(db_produto)
+    return db_produto
 
 @app.get("/produtos/{produto_id}", response_model=Produto)
-def localizar_produto(produto_id: int):
-    for p in produtos:
-        if p.id == produto_id:
-            return p
-    raise HTTPException(status_code=404, detail="Produto não encontrado.")
+def localizar_produto(produto_id: int, db: Session = Depends(get_db)):
+    db_produto = db.query(ProdutoDB).filter(ProdutoDB.id == produto_id).first()
+    if db_produto is None:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    return db_produto
 
-# Novo endpoint para listar todos os produtos  
 @app.get("/produtos/", response_model=List[Produto])  
-def listar_produtos():  
-    return produtos  # Retorna a lista de produtos cadastrados
+def listar_produtos(db: Session = Depends(get_db)):  
+    produtos = db.query(ProdutoDB).all()  # Obtém todos os produtos do banco de dados  
+    return produtos  
 
+@app.delete("/produtos/{produto_id}")
+def excluir_produto(produto_id: int, db: Session = Depends(get_db)):
+    db_produto = db.query(ProdutoDB).filter(ProdutoDB.id == produto_id).first()
+    if db_produto is None:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    
+    db.delete(db_produto)
+    db.commit()
+    return {"msg": "Produto excluído com sucesso."}
+
+# Rotas para gerenciamento de relatórios
 @app.get("/relatorios/", response_model=List[Relatorio])
-def gerar_relatorios():
-    # Gerar relatórios sobre o estoque (simulação)
-    return [
-        {"id": 1, "descricao": "Relatório de produtos com baixo estoque", "data": "2024-11-04"},
-        {"id": 2, "descricao": "Movimentação de produtos", "data": "2024-11-04"}
+def gerar_relatorios(db: Session = Depends(get_db)):
+    # Exemplo de relatório de produtos com estoque baixo
+    produtos_baixo_estoque = db.query(ProdutoDB).filter(ProdutoDB.quantidade < 10).all()
+    
+    # Criar relatório com base nos dados do banco
+    relatorios = [
+        {"id": 1, "descricao": f"Relatório de produtos com baixo estoque: {len(produtos_baixo_estoque)} produtos", "data": "2024-11-04"}
     ]
+    return relatorios
 
-
-
-# Rotas para gerenciamento de usuários
-@app.post("/usuarios/", response_model=Usuario)
-def cadastrar_usuario(usuario: Usuario):
-    # Verifica se o usuário já existe
-    for u in usuarios:
-        if u.inscricao == usuario.inscricao:
-            raise HTTPException(status_code=400, detail="Usuário já cadastrado.")
-    usuarios.append(usuario)
-    return usuario
-
-@app.get("/usuarios/{inscricao}", response_model=Usuario)
-def localizar_usuario(inscricao: str):
-    for u in usuarios:
-        if u.inscricao == inscricao:
-            return u
-    raise HTTPException(status_code=404, detail="Usuário não encontrado.")
 
 
 
